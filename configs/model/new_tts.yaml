@@ -7,12 +7,16 @@ defaults:
 
 _target_: matcha.models.matcha_tts.MatchaTTS
 n_vocab: 49
+n_spks: 100 # just any number > 1
 spk_emb_dim: 192
 n_feats: 80
 data_statistics: ${data.data_statistics}
 out_size: null # Must be divisible by 4
 prior_loss: true
+diff_loss: true
+dur_loss: true
 use_precomputed_durations: ${data.load_durations}
 freeze_decoder: False
-pretrained_decoder_weight: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/flow_decoder.pt"
+freeze_encoder: False
+# pretrained_decoder_weight: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/matcha_decoder.pt"
 # pretrained_encoder_weight: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/encoder.pt"

@@ -1,0 +1,22 @@
+_target_: matcha.data.text_mel_datamodule.TextMelDataModule
+name: new_tts
+dataset_path: "indiejoseph/tts20250516"
+dataset_valid_ratio: 0.0001
+batch_size: 64
+num_workers: 0
+pin_memory: True
+add_blank: True
+n_spks: 100
+n_fft: 1024
+n_feats: 80
+sample_rate: 22050
+hop_length: 256
+win_length: 1024
+f_min: 0
+f_max: 8000
+data_statistics:
+  mel_mean: -5.205528736114502
+  mel_std: 2.1896095275878906
+seed: ${seed}
+load_durations: false
+speaker_embedding_model_path: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/campplus.onnx"

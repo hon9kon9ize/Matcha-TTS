@@ -150,7 +150,7 @@ def main():
             args.spk = 0
             warn = "[!] Speaker ID not provided! Using speaker ID 0"
             warnings.warn(warn, UserWarning)
-        inputs["spks"] = np.repeat(args.spk, x.shape[0]).astype(np.int64)
+        inputs["spk_emb"] = np.repeat(args.spk, x.shape[0]).astype(np.int64)
 
     has_vocoder_embedded = model_outputs[0].name == "wav"
     if has_vocoder_embedded:

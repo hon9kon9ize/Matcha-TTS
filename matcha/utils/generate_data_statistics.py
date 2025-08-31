@@ -4,13 +4,13 @@ when needed.
 
 Parameters from hparam.py will be used
 """
+
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
 
-import rootutils
 import torch
 from hydra import compose, initialize
 from omegaconf import open_dict
@@ -54,7 +54,7 @@ def main():
         "-i",
         "--input-config",
         type=str,
-        default="vctk.yaml",
+        default="new_tts.yaml",
         help="The name of the yaml config file under configs/data",
     )
 
@@ -64,6 +64,14 @@ def main():
         type=int,
         default="256",
         help="Can have increased batch size for faster computation",
+    )
+
+    parser.add_argument(
+        "-d",
+        "--dataset-path",
+        type=str,
+        default="indiejoseph/tts20250516",
+        help="Path to the dataset file or HuggingFace dataset name",
     )
 
     parser.add_argument(
@@ -84,17 +92,18 @@ def main():
     with initialize(version_base="1.3", config_path="../../configs/data"):
         cfg = compose(config_name=args.input_config, return_hydra_config=True, overrides=[])
 
-    root_path = rootutils.find_root(search_from=__file__, indicator=".project-root")
-
     with open_dict(cfg):
         del cfg["hydra"]
         del cfg["_target_"]
         cfg["data_statistics"] = None
         cfg["seed"] = 1234
         cfg["batch_size"] = args.batch_size
-        cfg["train_filelist_path"] = str(os.path.join(root_path, cfg["train_filelist_path"]))
-        cfg["valid_filelist_path"] = str(os.path.join(root_path, cfg["valid_filelist_path"]))
+        cfg["dataset_path"] = args.dataset_path
+        cfg["dataset_valid_ratio"] = 0.0001
         cfg["load_durations"] = False
+        cfg["skip_pos"] = True
+        cfg["skip_spk_emb"] = True
+        cfg["num_workers"] = 12
 
     text_mel_datamodule = TextMelDataModule(**cfg)
     text_mel_datamodule.setup()

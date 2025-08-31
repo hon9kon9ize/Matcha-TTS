@@ -1,0 +1,11 @@
+in_channels: 320
+out_channels: 80
+channels: [256]
+dropout: 0.0
+attention_head_dim: 64
+n_blocks: 4
+num_mid_blocks: 12
+num_heads: 8
+act_fn: gelu
+static_chunk_size: 50
+num_decoding_left_chunks: -1

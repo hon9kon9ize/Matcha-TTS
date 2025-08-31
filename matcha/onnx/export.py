@@ -83,7 +83,7 @@ def get_inputs(is_multi_speaker):
     if is_multi_speaker:
         spks = torch.LongTensor([1])
         model_inputs.append(spks)
-        input_names.append("spks")
+        input_names.append("spk_emb")
 
     return tuple(model_inputs), input_names
 

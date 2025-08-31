@@ -2,9 +2,15 @@
 This is a base lightning module that can be used to train a model.
 The benefit of this abstraction is that all the logic outside of model definition can be reused for different models.
 """
+
 import inspect
 from abc import ABC
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
+import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")  # Use non-interactive backend
 
 import torch
 from lightning import LightningModule
@@ -53,20 +59,56 @@ class BaseLightningClass(LightningModule, ABC):
 
         return {"optimizer": optimizer}
 
+    @property
+    def logger_type(self):
+        logger = self.logger
+        if logger is None:
+            return "none"
+        elif isinstance(logger, WandbLogger):
+            return "wandb"
+        elif isinstance(self.logger, TensorBoardLogger):
+            return "tb"
+        else:
+            return "other"
+
+    def log_image(self, name: str, img, step: Optional[int] = None):
+        if self.trainer.logger is not None:
+            if self.logger_type == "tb":
+                if img.shape[2] <= 4:
+                    # WHC -> CWH
+                    img = np.transpose(img, (2, 0, 1))
+                self.trainer.logger.experiment.add_image(name, img, self.trainer.global_step)
+            elif self.logger_type == "wandb":
+                # if img is a list
+                if isinstance(img, list):
+                    img = img
+                else:
+                    img = [img]
+
+                self.trainer.logger.log_image(key=name, images=img)
+                # self.trainer.logger.experiment.log({name: wandb.Image(img)})
+
     def get_losses(self, batch):
         x, x_lengths = batch["x"], batch["x_lengths"]
         y, y_lengths = batch["y"], batch["y_lengths"]
-        spks = batch["spks"]
+        tone = batch["tone"]
+        word_pos = batch["word_pos"]
+        syllable_pos = batch["syllable_pos"]
+        spk_emb = batch["spk_emb"]
 
         dur_loss, prior_loss, diff_loss, *_ = self(
             x=x,
             x_lengths=x_lengths,
             y=y,
             y_lengths=y_lengths,
-            spks=spks,
+            tone=tone,
+            word_pos=word_pos,
+            syllable_pos=syllable_pos,
+            spk_emb=spk_emb,
             out_size=self.out_size,
             durations=batch["durations"],
         )
+
         return {
             "dur_loss": dur_loss,
             "prior_loss": prior_loss,
@@ -172,38 +214,44 @@ class BaseLightningClass(LightningModule, ABC):
                 log.debug("Plotting original samples")
                 for i in range(2):
                     y = one_batch["y"][i].unsqueeze(0).to(self.device)
-                    self.logger.experiment.add_image(
+                    y = y[:, : one_batch["y_lengths"][i]]
+                    self.log_image(
                         f"original/{i}",
                         plot_tensor(y.squeeze().cpu()),
-                        self.current_epoch,
-                        dataformats="HWC",
                     )
 
             log.debug("Synthesising...")
             for i in range(2):
                 x = one_batch["x"][i].unsqueeze(0).to(self.device)
                 x_lengths = one_batch["x_lengths"][i].unsqueeze(0).to(self.device)
-                spks = one_batch["spks"][i].unsqueeze(0).to(self.device) if one_batch["spks"] is not None else None
-                output = self.synthesise(x[:, :x_lengths], x_lengths, n_timesteps=10, spks=spks)
+                tone = one_batch["tone"][i].unsqueeze(0).to(self.device)
+                word_pos = one_batch["word_pos"][i].unsqueeze(0).to(self.device)
+                syllable_pos = one_batch["syllable_pos"][i].unsqueeze(0).to(self.device)
+                spk_emb = (
+                    one_batch["spk_emb"][i].unsqueeze(0).to(self.device) if one_batch["spk_emb"] is not None else None
+                )
+                output = self.synthesise(
+                    x[:, :x_lengths],
+                    x_lengths,
+                    tone=tone[:, :x_lengths],
+                    word_pos=word_pos[:, :x_lengths],
+                    syllable_pos=syllable_pos[:, :x_lengths],
+                    n_timesteps=10,
+                    spk_emb=spk_emb,
+                )
                 y_enc, y_dec = output["encoder_outputs"], output["decoder_outputs"]
                 attn = output["attn"]
-                self.logger.experiment.add_image(
+                self.log_image(
                     f"generated_enc/{i}",
                     plot_tensor(y_enc.squeeze().cpu()),
-                    self.current_epoch,
-                    dataformats="HWC",
                 )
-                self.logger.experiment.add_image(
+                self.log_image(
                     f"generated_dec/{i}",
                     plot_tensor(y_dec.squeeze().cpu()),
-                    self.current_epoch,
-                    dataformats="HWC",
                 )
-                self.logger.experiment.add_image(
+                self.log_image(
                     f"alignment/{i}",
                     plot_tensor(attn.squeeze().cpu()),
-                    self.current_epoch,
-                    dataformats="HWC",
                 )
 
     def on_before_optimizer_step(self, optimizer):

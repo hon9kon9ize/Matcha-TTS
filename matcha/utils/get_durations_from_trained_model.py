@@ -4,6 +4,7 @@ when needed.
 
 Parameters from hparam.py will be used
 """
+
 import argparse
 import json
 import os
@@ -53,7 +54,7 @@ def compute_durations(data_loader: torch.utils.data.DataLoader, model: nn.Module
     for batch in tqdm(data_loader, desc="🍵 Computing durations 🍵:"):
         x, x_lengths = batch["x"], batch["x_lengths"]
         y, y_lengths = batch["y"], batch["y_lengths"]
-        spks = batch["spks"]
+        spks = batch["spk_emb"]
         x = x.to(device)
         y = y.to(device)
         x_lengths = x_lengths.to(device)

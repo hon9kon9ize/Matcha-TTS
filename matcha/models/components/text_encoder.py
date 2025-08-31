@@ -1,4 +1,4 @@
-""" from https://github.com/jaywalnut310/glow-tts """
+"""from https://github.com/jaywalnut310/glow-tts"""
 
 import math
 
@@ -333,7 +333,7 @@ class TextEncoder(nn.Module):
         duration_predictor_params,
         n_vocab,
         n_spks=1,
-        spk_emb_dim=128,
+        spk_emb_dim=64,
     ):
         super().__init__()
         self.encoder_type = encoder_type
@@ -345,6 +345,12 @@ class TextEncoder(nn.Module):
 
         self.emb = torch.nn.Embedding(n_vocab, self.n_channels)
         torch.nn.init.normal_(self.emb.weight, 0.0, self.n_channels**-0.5)
+        self.tone_emb = nn.Embedding(7, self.n_channels)  # PAD token + 6 tones for Cantonese
+        torch.nn.init.normal_(self.tone_emb.weight, 0.0, self.n_channels**-0.5)
+        self.word_pos_emb = nn.Embedding(4, self.n_channels)  # 0: pad, 1: begin, 2: middle, 3: end
+        nn.init.normal_(self.word_pos_emb.weight, 0.0, self.n_channels**-0.5)
+        self.syllable_pos = nn.Embedding(4, self.n_channels)  # 0: pad, 1: onset, 2: nucleus, 3: coda
+        nn.init.normal_(self.syllable_pos.weight, 0.0, self.n_channels**-0.5)
 
         if encoder_params.prenet:
             self.prenet = ConvReluNorm(
@@ -366,8 +372,7 @@ class TextEncoder(nn.Module):
             encoder_params.kernel_size,
             encoder_params.p_dropout,
         )
-
-        self.proj_m = torch.nn.Conv1d(self.n_channels + (spk_emb_dim if n_spks > 1 else 0), self.n_feats, 1)
+        self.proj_m = torch.nn.Conv1d(self.n_channels + spk_emb_dim, self.n_feats, 1)
         self.proj_w = DurationPredictor(
             self.n_channels + (spk_emb_dim if n_spks > 1 else 0),
             duration_predictor_params.filter_channels_dp,
@@ -375,7 +380,11 @@ class TextEncoder(nn.Module):
             duration_predictor_params.p_dropout,
         )
 
-    def forward(self, x, x_lengths, spks=None):
+    def output_size(self):
+        """Get the output size of the encoder"""
+        return self.n_feats
+
+    def forward(self, x, x_lengths, tone, word_pos, syllable_pos, spks):
         """Run forward pass to the transformer based encoder and duration predictor
 
         Args:
@@ -383,6 +392,12 @@ class TextEncoder(nn.Module):
                 shape: (batch_size, max_text_length)
             x_lengths (torch.Tensor): text input lengths
                 shape: (batch_size,)
+            tone (torch.Tensor): tone for the text input
+                shape: (batch_size, max_text_length)
+            word_pos (torch.Tensor): word positions for the text input
+                shape: (batch_size, max_text_length)
+            syllable_pos (torch.Tensor): syllable positions for the text input
+                shape: (batch_size, max_text_length)
             spks (torch.Tensor, optional): speaker ids. Defaults to None.
                 shape: (batch_size,)
 
@@ -394,7 +409,9 @@ class TextEncoder(nn.Module):
             x_mask (torch.Tensor): mask for the text input
                 shape: (batch_size, 1, max_text_length)
         """
-        x = self.emb(x) * math.sqrt(self.n_channels)
+        x = (
+            self.emb(x) + self.tone_emb(tone) + self.word_pos_emb(word_pos) + self.syllable_pos(syllable_pos)
+        ) * math.sqrt(self.n_channels)
         x = torch.transpose(x, 1, -1)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
@@ -408,3 +425,38 @@ class TextEncoder(nn.Module):
         logw = self.proj_w(x_dp, x_mask)
 
         return mu, logw, x_mask
+
+
+if __name__ == "__main__":
+    text_encoder = TextEncoder(
+        encoder_type="RoPE Encoder",
+        encoder_params={
+            "n_feats": 80,
+            "n_channels": 192,
+            "filter_channels": 768,
+            "filter_channels_dp": 256,
+            "n_heads": 2,
+            "n_layers": 6,
+            "kernel_size": 3,
+            "p_dropout": 0.1,
+            "spk_emb_dim": 64,
+            "n_spk_embed": 1,
+            "prenet": True,
+        },
+        duration_predictor_params={
+            "filter_channels_dp": 256,
+            "kernel_size": 3,
+            "p_dropout": 0.1,
+        },
+        n_vocab=38,  # 49
+        spk_emb_dim=192,
+    )
+
+    x = torch.randint(0, 38, (2, 10))
+    x_lengths = torch.tensor([10, 8])
+    tone = torch.randint(0, 7, (2, 10))
+    word_pos = torch.randint(0, 4, (2, 10))
+    syllable_pos = torch.randint(0, 4, (2, 10))
+    spk_embed = torch.randn(2, 192)
+
+    mu, logw, x_mask = text_encoder(x, x_lengths, tone, word_pos, syllable_pos, spk_embed)

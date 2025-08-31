@@ -1,17 +1,16 @@
-""" from https://github.com/keithito/tacotron
+punctuation = ["!", "?", "…", ",", ".", "'", "-"]
+pu_symbols = punctuation + ["SP", "UNK"]
+pad = "_"
+ONSETS = "b d g gw z p t k kw c m n ng f h s l w j"
+NUCLEUSES = "aa a i yu u oe e eo o m n ng"
+CODAS = "p t k m n ng i u"
 
-Defines the set of symbols used in text input to the model.
-"""
-_pad = "_"
-_punctuation = ';:,.!?¡¿—…"«»“” '
-_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-_letters_ipa = (
-    "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"
+symbols = list(
+    set([f"^{x}" for x in ONSETS.split()] + [x for x in NUCLEUSES.split()] + [f"{x}$" for x in CODAS.split()])
 )
+# sort symbols to ensure consistent order
+symbols.sort()
+symbols = [pad] + pu_symbols + symbols
 
-
-# Export all symbols:
-symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
-
-# Special symbol ids
-SPACE_ID = symbols.index(" ")
+if __name__ == "__main__":
+    print(len(symbols))
