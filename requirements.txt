@@ -46,3 +46,4 @@ ToJyutping
 cn2an
 pycantonese
 onnxruntime
+pydips
