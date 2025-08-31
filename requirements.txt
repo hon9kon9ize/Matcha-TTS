@@ -45,3 +45,4 @@ seaborn
 ToJyutping
 cn2an
 pycantonese
+onnxruntime
