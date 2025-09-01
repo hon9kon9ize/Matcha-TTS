@@ -8,7 +8,6 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data.dataloader import DataLoader
 import onnxruntime
-from matcha.text import text_to_sequence
 from matcha.utils.audio import mel_spectrogram
 from matcha.utils.model import fix_len_compatibility, normalize
 from matcha.utils.utils import intersperse
@@ -222,11 +221,14 @@ class TextMelDataset(torch.utils.data.Dataset):
     def get_datapoint(self, row):
         text = row["text"]
         phone = row["phone"]
+        tone = row["tones"]
+        word_pos = row["word_pos"]
+        syllable_pos = row["syllable_pos"]
         audio = row["audio"]["array"]
         audio_path = row["audio"]["path"]
         sr = row["audio"]["sampling_rate"]
         text, phone, tone, word_pos, syllable_pos = self.get_text(
-            text, phone, add_blank=self.add_blank, skip_pos=self.skip_pos
+            text, phone, tone, word_pos, syllable_pos, add_blank=self.add_blank, skip_pos=self.skip_pos
         )
         audio16k = audio
         audio22k = audio
@@ -295,18 +297,17 @@ class TextMelDataset(torch.utils.data.Dataset):
         mel = normalize(mel, self.data_parameters["mel_mean"], self.data_parameters["mel_std"])
         return mel
 
-    def get_text(self, text, phone, add_blank=False, skip_pos=False):
-        phone_ids, tones, word_pos, syllable_pos = text_to_sequence(text, phone, skip_pos)
+    def get_text(self, text, phone, tones, word_pos, syllable_pos, add_blank=False, skip_pos=False):
         if add_blank:
-            phone_ids = intersperse(phone_ids, 0)
+            phone = intersperse(phone, 0)
             tones = intersperse(tones, 0)
             if not skip_pos:
                 word_pos = intersperse(word_pos, 0)
                 syllable_pos = intersperse(syllable_pos, 0)
             else:
-                word_pos = [0] * len(phone_ids)
-                syllable_pos = [0] * len(phone_ids)
-        phone = torch.LongTensor(phone_ids)
+                word_pos = [0] * len(phone)
+                syllable_pos = [0] * len(phone)
+        phone = torch.LongTensor(phone)
         tone = torch.LongTensor(tones)
         word_pos = torch.LongTensor(word_pos)
         syllable_pos = torch.LongTensor(syllable_pos)
