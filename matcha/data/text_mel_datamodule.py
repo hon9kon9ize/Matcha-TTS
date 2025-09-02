@@ -91,13 +91,6 @@ class TextMelDataModule(LightningDataModule):
         ds = load_dataset(self.hparams.dataset_path, split="train")
         ds = ds.train_test_split(test_size=self.hparams.dataset_valid_ratio)
 
-        # TODO: Remove this when the dataset is fixed
-        # ds = ds.cast_column("audio", Audio(sampling_rate=22050))
-        ds = ds.filter(
-            lambda x: len(x["text"]) == len(x["phone"].split(" ")),
-            num_proc=12,
-        )
-
         speaker_embedding_onnx_session = load_spk_embedding(self.hparams.speaker_embedding_model_path)
 
         self.trainset = TextMelDataset(  # pylint: disable=attribute-defined-outside-init
