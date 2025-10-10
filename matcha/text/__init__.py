@@ -1,8 +1,7 @@
 """from https://github.com/keithito/tacotron"""
 
-from matcha.text import cleaners
-from matcha.text.symbols import symbols
-from matcha.text.cleaners import clean_text
+from matcha.text.cantonese.symbols import symbols
+from matcha.text.cantonese.cleaners import clean_text
 
 # Mappings from symbol to numeric ID and vice versa:
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
@@ -13,8 +12,8 @@ class UnknownCleanerException(Exception):
     pass
 
 
-def text_to_sequence(text, jyutping=None, skip_pos=False):
-    _, phones, tones, word_pos, syllable_pos = clean_text(text, jyutping, skip_pos)
+def text_to_sequence(text, phone=None, skip_pos=False):
+    _, phones, tones, word_pos, syllable_pos = clean_text(text, phone, skip_pos)
     phone_token_ids = cleaned_text_to_sequence(phones)
 
     return phone_token_ids, tones, word_pos, syllable_pos
@@ -38,12 +37,3 @@ def sequence_to_text(sequence):
         s = _id_to_symbol[symbol_id]
         result += s
     return result
-
-
-def _clean_text(text, cleaner_names):
-    for name in cleaner_names:
-        cleaner = getattr(cleaners, name)
-        if not cleaner:
-            raise UnknownCleanerException(f"Unknown cleaner: {name}")
-        text = cleaner(text)
-    return text

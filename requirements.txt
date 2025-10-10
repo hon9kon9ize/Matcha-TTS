@@ -1,3 +1,5 @@
+--find-links https://k2-fsa.github.io/icefall/piper_phonemize.html
+
 # --------- pytorch --------- #
 torch>=2.0.0
 torchvision>=0.15.0
@@ -48,3 +50,4 @@ pycantonese
 onnxruntime
 pydips
 datasets
+piper_phonemize

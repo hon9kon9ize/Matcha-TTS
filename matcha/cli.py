@@ -107,7 +107,9 @@ def load_vocoder(vocoder_name, checkpoint_path, device):
 
 def load_matcha(model_name, checkpoint_path, device):
     print(f"[!] Loading {model_name}!")
-    model = MatchaTTS.load_from_checkpoint(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    model = MatchaTTS(**checkpoint["hyper_parameters"])
+    model.load_state_dict(checkpoint["state_dict"])
     _ = model.eval()
 
     print(f"[+] {model_name} loaded!")

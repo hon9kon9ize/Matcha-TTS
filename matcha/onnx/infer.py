@@ -4,12 +4,44 @@ import warnings
 from pathlib import Path
 from time import perf_counter
 
+import librosa
 import numpy as np
 import onnxruntime as ort
 import soundfile as sf
 import torch
 
-from matcha.cli import plot_spectrogram_to_numpy, process_text
+from matcha.cli import plot_spectrogram_to_numpy
+from matcha.utils.utils import intersperse
+from matcha.text import sequence_to_text, text_to_sequence
+from matcha.data.text_mel_datamodule import load_spk_embedding, get_spk_embedding
+
+
+def process_text(text: str, jyutping: str, prompt_audio: str, add_blank=True, speaker_session=None):
+    phone_token_ids, tones, word_pos, syllable_pos = text_to_sequence(text, jyutping)
+    if add_blank:
+        phone_token_ids = intersperse(phone_token_ids, 0)
+        tones = intersperse(tones, 0)
+        word_pos = intersperse(word_pos, 0)
+        syllable_pos = intersperse(syllable_pos, 0)
+    x = torch.tensor(phone_token_ids, dtype=torch.long)
+    tones = torch.tensor(tones, dtype=torch.long)
+    word_pos = torch.tensor(word_pos, dtype=torch.long)
+    syllable_pos = torch.tensor(syllable_pos, dtype=torch.long)
+    x_lengths = torch.tensor([x.shape[-1]], dtype=torch.long)
+    prompt_speech = librosa.load(prompt_audio, sr=16000)[0]
+    spk_emb = get_spk_embedding(
+        prompt_speech,
+        speaker_session,
+    )
+    spk_emb = torch.tensor(spk_emb, dtype=torch.float)[None]
+    return {
+        "x": x,
+        "x_lengths": x_lengths,
+        "tones": tones,
+        "word_pos": word_pos,
+        "syllable_pos": syllable_pos,
+        "spk_emb": spk_emb,
+    }
 
 
 def validate_args(args):
@@ -108,15 +140,13 @@ def main():
         help="change the speaking rate, a higher value means slower speaking rate (default: 1.0)",
     )
     parser.add_argument("--gpu", action="store_true", help="Use CPU for inference (default: use GPU if available)")
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=os.getcwd(),
-        help="Output folder to save results (default: current dir)",
-    )
+    parser.add_argument("--prompt-audio", type=str, required=True, help="Prompt audio file for speaker embedding")
+    parser.add_argument("--output-dir", type=str, default="./output", help="Output directory (default: ./output)")
 
     args = parser.parse_args()
     args = validate_args(args)
+
+    speaker_embedding_onnx_session = load_spk_embedding("pretrained_models/campplus.onnx")
 
     if args.gpu:
         providers = ["GPUExecutionProvider"]
@@ -133,24 +163,29 @@ def main():
         with open(args.file, encoding="utf-8") as file:
             text_lines = file.read().splitlines()
 
-    processed_lines = [process_text(0, line, "cpu") for line in text_lines]
-    x = [line["x"].squeeze() for line in processed_lines]
-    # Pad
+    processed_lines = [
+        process_text(line, "", args.prompt_audio, True, speaker_embedding_onnx_session) for line in text_lines
+    ]
+    x = [line["x"] for line in processed_lines]
     x = torch.nn.utils.rnn.pad_sequence(x, batch_first=True)
-    x = x.detach().cpu().numpy()
-    x_lengths = np.array([line["x_lengths"].item() for line in processed_lines], dtype=np.int64)
+    tones = [line["tones"] for line in processed_lines]
+    tones = torch.nn.utils.rnn.pad_sequence(tones, batch_first=True)
+    word_pos = [line["word_pos"] for line in processed_lines]
+    word_pos = torch.nn.utils.rnn.pad_sequence(word_pos, batch_first=True)
+    syllable_pos = [line["syllable_pos"] for line in processed_lines]
+    syllable_pos = torch.nn.utils.rnn.pad_sequence(syllable_pos, batch_first=True)
+    x_lengths = torch.tensor([line["x_lengths"].item() for line in processed_lines], dtype=torch.long)
+    spk_emb = processed_lines[0]["spk_emb"].repeat(len(processed_lines), 1)  # repeat for batch
+
     inputs = {
-        "x": x,
-        "x_lengths": x_lengths,
+        "x": x.numpy(),
+        "x_lengths": x_lengths.numpy(),
         "scales": np.array([args.temperature, args.speaking_rate], dtype=np.float32),
+        "tone": tones.numpy(),
+        "word_pos": word_pos.numpy(),
+        "syllable_pos": syllable_pos.numpy(),
+        "spk_emb": spk_emb.numpy(),
     }
-    is_multi_speaker = len(model_inputs) == 4
-    if is_multi_speaker:
-        if args.spk is None:
-            args.spk = 0
-            warn = "[!] Speaker ID not provided! Using speaker ID 0"
-            warnings.warn(warn, UserWarning)
-        inputs["spk_emb"] = np.repeat(args.spk, x.shape[0]).astype(np.int64)
 
     has_vocoder_embedded = model_outputs[0].name == "wav"
     if has_vocoder_embedded:

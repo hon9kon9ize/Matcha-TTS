@@ -165,3 +165,8 @@ synth_output/
 *.ipynb
 tmp
 pretrained_models
+*.wav
+*.pkl
+*.mp3
+*.pth
+*.png

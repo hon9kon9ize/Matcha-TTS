@@ -1,19 +1,12 @@
-from matcha.text.symbols import punctuation
+from matcha.text.cantonese.symbols import punctuation
 import re
 import unicodedata
 from pydips import BertModel
 from typing import Optional, List
-import cn2an
 import pycantonese
 import ToJyutping
 
 ws_model = BertModel()
-
-
-def normalizer(x):
-    x = cn2an.transform(x, "an2cn")
-
-    return x
 
 
 def word2jyutping(word):
@@ -27,97 +20,6 @@ def word2jyutping(word):
         raise ValueError(f"Failed to convert {word} to jyutping: {jyutpings}")
 
     return " ".join(jyutpings)
-
-
-rep_map = {
-    "：": ",",
-    "︰": ",",
-    "；": ",",
-    "，": ",",
-    "﹐": ",",
-    "。": ".",
-    "！": "!",
-    "？": "?",
-    "﹖": "?",
-    "﹗": "!",
-    "\n": ".",
-    "·": ",",
-    "、": ",",
-    "丶": ",",
-    "...": "…",
-    "⋯": "…",
-    "$": ".",
-    "“": "'",
-    "”": "'",
-    '"': "'",
-    "‘": "'",
-    "’": "'",
-    "（": "'",
-    "）": "'",
-    "(": "'",
-    ")": "'",
-    "《": "'",
-    "》": "'",
-    "【": "'",
-    "】": "'",
-    "[": "'",
-    "]": "'",
-    "—": "-",
-    "～": "-",
-    "~": "-",
-    "「": "'",
-    "」": "'",
-    "_": "-",
-}
-
-replacement_chars = {
-    "ㄧ": "一",
-    "—": "一",
-    "更": "更",
-    "不": "不",
-    "料": "料",
-    "聯": "聯",
-    "行": "行",
-    "利": "利",
-    "謢": "護",
-    "岀": "出",
-    "鎭": "鎮",
-    "戯": "戲",
-    "旣": "既",
-    "立": "立",
-    "來": "來",
-    "年": "年",
-    "㗇": "蝦",
-    "臺": "台",
-    "檯": "枱",
-    "櫈": "凳",
-}
-
-
-def replace_punctuation(text):
-    pattern = re.compile("|".join(re.escape(p) for p in rep_map.keys()))
-    replaced_text = pattern.sub(lambda x: rep_map[x.group()], text)
-    replaced_text = "".join(
-        c for c in replaced_text if unicodedata.name(c, "").startswith("CJK UNIFIED IDEOGRAPH") or c in punctuation
-    )
-    # replace multiple punctuations with single one
-    replaced_text = re.sub(r"([{}])\1+".format(re.escape("".join(punctuation))), r"\1", replaced_text)
-
-    return replaced_text
-
-
-def replace_chars(text):
-    for k, v in replacement_chars.items():
-        text = text.replace(k, v)
-    return text
-
-
-def text_normalize(text):
-    text = text.strip()
-    text = normalizer(text)
-    text = replace_punctuation(text)
-    text = replace_chars(text)
-    return text
 
 
 def jyutping_to_onsets_nucleuses_codas_tones(jyutping_syllables):
@@ -248,12 +150,13 @@ def g2p(
 
 
 if __name__ == "__main__":
-    # text = "Apple BB 你點解會咁柒㗎？我真係唔該晒你呀！123"
+    from matcha.text.cantonese.cleaners import text_normalize
+
     text = "佢邊係想辭工吖，跳下草裙舞想加人工之嘛。"
-    # text = "我個 app 嘅介紹文想由你寫，因為我唔知從一般用家角度要細緻到乜程度"
-    # text = "佢哋最叻咪就係去㗇人傷害人,得個殼咋!"
     text = text_normalize(text)
 
     print("normalized text", text)
-    phones, tones, segments = g2p(text)
-    print(phones, tones, segments)
+
+    phones, tones, word2ph, word_pos, syllable_pos = g2p(text)
+
+    print(phones, tones, word2ph, word_pos, syllable_pos)
