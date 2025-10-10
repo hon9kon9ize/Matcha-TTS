@@ -18,6 +18,11 @@ torch.cuda.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+# Fix for PyTorch 2.6 weights_only issue
+from omegaconf import DictConfig
+
+torch.serialization.add_safe_globals([DictConfig])
+
 
 class MatchaWithVocoder(LightningModule):
     def __init__(self, matcha, vocoder):
@@ -25,8 +30,8 @@ class MatchaWithVocoder(LightningModule):
         self.matcha = matcha
         self.vocoder = vocoder
 
-    def forward(self, x, x_lengths, scales, spks=None):
-        mel, mel_lengths = self.matcha(x, x_lengths, scales, spks)
+    def forward(self, x, x_lengths, scales, tone, word_pos, syllable_pos, spks=None):
+        mel, mel_lengths = self.matcha(x, x_lengths, scales, tone, word_pos, syllable_pos, spks)
         wavs = self.vocoder(mel).clamp(-1, 1)
         lengths = mel_lengths * 256
         return wavs.squeeze(1), lengths
@@ -38,7 +43,7 @@ def get_exportable_module(matcha, vocoder, n_timesteps):
     based on whether the vocoder is embedded in  the final graph
     """
 
-    def onnx_forward_func(x, x_lengths, scales, spks=None):
+    def onnx_forward_func(x, x_lengths, scales, tone, word_pos, syllable_pos, spks=None):
         """
         Custom forward function for accepting
         scaler parameters as tensors
@@ -46,7 +51,17 @@ def get_exportable_module(matcha, vocoder, n_timesteps):
         # Extract scaler parameters from tensors
         temperature = scales[0]
         length_scale = scales[1]
-        output = matcha.synthesise(x, x_lengths, n_timesteps, temperature, spks, length_scale)
+        output = matcha.synthesise(
+            x,
+            x_lengths,
+            tone,
+            word_pos,
+            syllable_pos,
+            n_timesteps,
+            spk_emb=spks,
+            temperature=temperature,
+            length_scale=length_scale,
+        )
         return output["mel"], output["mel_lengths"]
 
     # Monkey-patch Matcha's forward function
@@ -73,15 +88,23 @@ def get_inputs(is_multi_speaker):
     length_scale = 1.0
     scales = torch.Tensor([temperature, length_scale])
 
-    model_inputs = [x, x_lengths, scales]
+    # New embeddings
+    tone = torch.randint(low=0, high=7, size=(1, dummy_input_length), dtype=torch.long)
+    word_pos = torch.randint(low=0, high=4, size=(1, dummy_input_length), dtype=torch.long)
+    syllable_pos = torch.randint(low=0, high=4, size=(1, dummy_input_length), dtype=torch.long)
+
+    model_inputs = [x, x_lengths, scales, tone, word_pos, syllable_pos]
     input_names = [
         "x",
         "x_lengths",
         "scales",
+        "tone",
+        "word_pos",
+        "syllable_pos",
     ]
 
     if is_multi_speaker:
-        spks = torch.LongTensor([1])
+        spks = torch.randn(1, 192, dtype=torch.float)
         model_inputs.append(spks)
         input_names.append("spk_emb")
 
@@ -131,7 +154,7 @@ def main():
     else:
         vocoder = None
 
-    is_multi_speaker = matcha.n_spks > 1
+    is_multi_speaker = True
 
     dummy_input, input_names = get_inputs(is_multi_speaker)
     model, output_names = get_exportable_module(matcha, vocoder, args.n_timesteps)
@@ -140,6 +163,9 @@ def main():
     dynamic_axes = {
         "x": {0: "batch_size", 1: "time"},
         "x_lengths": {0: "batch_size"},
+        "tone": {0: "batch_size", 1: "time"},
+        "word_pos": {0: "batch_size", 1: "time"},
+        "syllable_pos": {0: "batch_size", 1: "time"},
     }
 
     if vocoder is None:
@@ -159,7 +185,7 @@ def main():
         )
 
     if is_multi_speaker:
-        dynamic_axes["spks"] = {0: "batch_size"}
+        dynamic_axes["spk_emb"] = {0: "batch_size"}
 
     # Create the output directory (if not exists)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
