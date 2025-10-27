@@ -164,6 +164,7 @@ synth_output/
 /data
 *.ipynb
 tmp
+tmp2
 pretrained_models
 *.wav
 *.pkl
