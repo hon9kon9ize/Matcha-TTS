@@ -1,0 +1,24 @@
+_target_: matcha.data.text_mel_datamodule.TextMelDataModule
+name: test
+dataset_path: "test" # Dummy dataset path for testing
+dataset_valid_ratio: 0.1
+speaker_embedding_model_path: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/campplus.onnx"
+batch_size: 2
+num_workers: 0
+pin_memory: False
+add_blank: True
+n_spks: 1
+n_fft: 1024
+n_feats: 80
+sample_rate: 22050
+hop_length: 256
+win_length: 1024
+f_min: 0
+f_max: 8000
+data_statistics:
+  mel_mean: 0.0
+  mel_std: 1.0
+seed: 42
+load_durations: false
+skip_pos: false
+skip_spk_emb: true

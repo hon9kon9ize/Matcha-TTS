@@ -22,25 +22,6 @@ from matcha.utils.model import (
 log = utils.get_pylogger(__name__)
 
 
-class SpeakerDropout(nn.Module):
-    def __init__(self, p_dim=0.1, p_vec=0.1):
-        """
-        p_dim = element-wise dropout prob
-        p_vec = probability to drop the whole vector
-        """
-        super().__init__()
-        self.p_dim = p_dim
-        self.p_vec = p_vec
-        self.dim_dropout = nn.Dropout(p=p_dim)
-
-    def forward(self, x):
-        if not self.training:
-            return x
-        if torch.rand(1).item() < self.p_vec:
-            return torch.zeros_like(x)  # drop entire embedding
-        return self.dim_dropout(x)  # element-wise dropout
-
-
 class MatchaTTS(BaseLightningClass):  # 🍵
     def __init__(
         self,
@@ -85,10 +66,10 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             encoder.duration_predictor_params,
             n_vocab,
             n_spks,
-            spk_emb_dim=64,
+            spk_emb_dim=self.spk_emb_dim,
         )
-        self.spk_embed_affine_layer = nn.Linear(spk_emb_dim, 64)
-        self.spk_embed_dropout = SpeakerDropout(p_dim=0.2, p_vec=0.1)
+        self.spk_embed_affine_layer = nn.Linear(self.spk_emb_dim, self.spk_emb_dim)
+        self.lang_embed = nn.Embedding(3, self.spk_emb_dim)  # en, yue, zh
 
         self.decoder = CFM(
             in_channels=2 * encoder.encoder_params.n_feats,
@@ -96,7 +77,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             cfm_params=cfm,
             decoder_params=decoder,
             n_spks=n_spks,
-            spk_emb_dim=64,
+            spk_emb_dim=self.spk_emb_dim,
         )
 
         if pretrained_decoder_weight is not None:
@@ -135,6 +116,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         n_timesteps,
         cond=None,
         spk_emb=None,
+        lang=None,
         temperature=1.0,
         length_scale=1.0,
     ):
@@ -187,6 +169,13 @@ class MatchaTTS(BaseLightningClass):  # 🍵
             spk_emb = F.normalize(spk_emb, dim=1)
             spk_emb = self.spk_embed_affine_layer(spk_emb)
 
+        if lang is not None:
+            lang_emb = self.lang_embed(lang)
+            if spk_emb is not None:
+                spk_emb = spk_emb + lang_emb
+            else:
+                spk_emb = lang_emb
+
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, logw, x_mask = self.encoder(x, x_lengths, tone, word_pos, syllable_pos, spk_emb)
         w = torch.exp(logw) * x_mask
@@ -234,6 +223,7 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         out_size=None,
         cond=None,
         durations=None,
+        lang=None,
     ):
         """
         Computes 3 losses:
@@ -263,7 +253,13 @@ class MatchaTTS(BaseLightningClass):  # 🍵
         if spk_emb is not None:
             spk_emb = F.normalize(spk_emb, dim=1)
             spk_emb = self.spk_embed_affine_layer(spk_emb)
-            spk_emb = self.spk_embed_dropout(spk_emb)
+
+        if lang is not None:
+            lang_emb = self.lang_embed(lang)
+            if spk_emb is not None:
+                spk_emb = spk_emb + lang_emb
+            else:
+                spk_emb = lang_emb
 
         # Get encoder_outputs `mu_x` and log-scaled token durations `logw`
         mu_x, logw, x_mask = self.encoder(x, x_lengths, tone, word_pos, syllable_pos, spk_emb)

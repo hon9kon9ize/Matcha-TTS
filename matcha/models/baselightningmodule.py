@@ -95,6 +95,7 @@ class BaseLightningClass(LightningModule, ABC):
         word_pos = batch["word_pos"]
         syllable_pos = batch["syllable_pos"]
         spk_emb = batch["spk_emb"]
+        lang = batch["lang"]
 
         dur_loss, prior_loss, diff_loss, *_ = self(
             x=x,
@@ -107,6 +108,7 @@ class BaseLightningClass(LightningModule, ABC):
             spk_emb=spk_emb,
             out_size=self.out_size,
             durations=batch["durations"],
+            lang=lang,
         )
 
         return {
@@ -230,6 +232,7 @@ class BaseLightningClass(LightningModule, ABC):
                 spk_emb = (
                     one_batch["spk_emb"][i].unsqueeze(0).to(self.device) if one_batch["spk_emb"] is not None else None
                 )
+                lang = one_batch["lang"][i].unsqueeze(0).to(self.device)
                 output = self.synthesise(
                     x[:, :x_lengths],
                     x_lengths,
@@ -238,6 +241,7 @@ class BaseLightningClass(LightningModule, ABC):
                     syllable_pos=syllable_pos[:, :x_lengths],
                     n_timesteps=10,
                     spk_emb=spk_emb,
+                    lang=lang,
                 )
                 y_enc, y_dec = output["encoder_outputs"], output["decoder_outputs"]
                 attn = output["attn"]

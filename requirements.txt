@@ -51,3 +51,5 @@ onnxruntime
 pydips
 datasets
 piper_phonemize
+speechbrain
+pypinyin

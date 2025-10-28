@@ -6,7 +6,7 @@ defaults:
   - optimizer: adam.yaml
 
 _target_: matcha.models.matcha_tts.MatchaTTS
-n_vocab: 49
+n_vocab: 119
 n_spks: 100 # just any number > 1
 spk_emb_dim: 192
 n_feats: 80

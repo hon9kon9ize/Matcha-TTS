@@ -1,53 +1,16 @@
 import random
 from pathlib import Path
 from typing import Any, Dict, Optional
-import torchaudio.compliance.kaldi as kaldi
 import librosa
 import numpy as np
 import torch
 from lightning import LightningDataModule
 from torch.utils.data.dataloader import DataLoader
-import onnxruntime
 from matcha.utils.audio import mel_spectrogram
 from matcha.utils.model import fix_len_compatibility, normalize
 from matcha.utils.utils import intersperse
 from datasets import load_dataset
-
-
-def load_spk_embedding(onnx_path: str):
-    option = onnxruntime.SessionOptions()
-    option.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-    option.intra_op_num_threads = 1
-    ort_session = onnxruntime.InferenceSession(onnx_path, sess_options=option, providers=["CPUExecutionProvider"])
-    return ort_session
-
-
-def get_spk_embedding(audio, onnx_session):
-    audio_tensor = None
-
-    if isinstance(audio, np.ndarray):
-        audio_tensor = torch.from_numpy(audio).float().unsqueeze(dim=0)
-    elif isinstance(audio, torch.Tensor):
-        if audio.dim() == 1:
-            audio_tensor = audio.float().unsqueeze(dim=0)
-        elif audio.dim() == 2:
-            audio_tensor = audio.float()
-        else:
-            raise ValueError("Audio tensor must be 1D or 2D.")
-    if audio_tensor is None:
-        raise ValueError("Audio must be a numpy array or a torch tensor.")
-    feat = kaldi.fbank(audio_tensor, num_mel_bins=80, dither=0, sample_frequency=16000)
-    feat = feat - feat.mean(dim=0, keepdim=True)
-    embedding = (
-        onnx_session.run(
-            None,
-            {onnx_session.get_inputs()[0].name: feat.unsqueeze(dim=0).cpu().numpy()},
-        )[0]
-        .flatten()
-        .tolist()
-    )
-
-    return embedding
+from matcha.feature_extractions.spkemb_speechbrain import SpeechBrainSpkEmbExtractor
 
 
 class TextMelDataModule(LightningDataModule):
@@ -91,8 +54,6 @@ class TextMelDataModule(LightningDataModule):
         ds = load_dataset(self.hparams.dataset_path, split="train")
         ds = ds.train_test_split(test_size=self.hparams.dataset_valid_ratio)
 
-        speaker_embedding_onnx_session = load_spk_embedding(self.hparams.speaker_embedding_model_path)
-
         self.trainset = TextMelDataset(  # pylint: disable=attribute-defined-outside-init
             ds["train"],
             self.hparams.n_spks,
@@ -108,7 +69,6 @@ class TextMelDataModule(LightningDataModule):
             self.hparams.seed,
             self.hparams.load_durations,
             "tmp",
-            speaker_embedding_onnx_session,
             self.hparams.skip_pos,
             self.hparams.skip_spk_emb,
         )
@@ -127,7 +87,6 @@ class TextMelDataModule(LightningDataModule):
             self.hparams.seed,
             self.hparams.load_durations,
             "tmp",
-            speaker_embedding_onnx_session,
             self.hparams.skip_pos,
             self.hparams.skip_spk_emb,
         )
@@ -182,7 +141,6 @@ class TextMelDataset(torch.utils.data.Dataset):
         seed=None,
         load_durations=False,
         tmp_dir="tmp",
-        speaker_embedding_onnx_session=None,
         skip_pos=False,
         skip_spk_emb=False,
     ):
@@ -197,7 +155,7 @@ class TextMelDataset(torch.utils.data.Dataset):
         self.f_min = f_min
         self.f_max = f_max
         self.load_durations = load_durations
-        self.speaker_embedding_onnx_session = speaker_embedding_onnx_session
+        self.speaker_embedding_extractor = SpeechBrainSpkEmbExtractor(device="cpu") if not skip_spk_emb else None
         self.tmp_dir = Path(tmp_dir)
         self.skip_pos = skip_pos
         self.skip_spk_emb = skip_spk_emb
@@ -213,13 +171,44 @@ class TextMelDataset(torch.utils.data.Dataset):
 
     def get_datapoint(self, row):
         text = row["text"]
-        phone = row["phone"]
-        tone = row["tones"]
-        word_pos = row["word_pos"]
-        syllable_pos = row["syllable_pos"]
-        audio = row["audio"]["array"]
+        lang = row.get("lang", "en")
+        phone = row.get("phone")
+        tone = row.get("tones")
+        word_pos = row.get("word_pos")
+        syllable_pos = row.get("syllable_pos")
+        audio = np.array(row["audio"]["array"])
         audio_path = row["audio"]["path"]
         sr = row["audio"]["sampling_rate"]
+
+        if phone is None:
+            # Process text with corresponding G2P
+            if lang == "en":
+                from matcha.text.english.cleaners import clean_text
+            elif lang == "yue":
+                from matcha.text.cantonese.cleaners import clean_text
+            elif lang == "zh":
+                from matcha.text.mandarin.cleaners import clean_text
+            else:
+                raise ValueError(f"Unknown language: {lang}")
+            norm_text, phones, tones, word_pos, syllable_pos = clean_text(text)
+            # Convert phoneme symbols to ids
+            from matcha.text.symbols import symbol_to_id
+
+            phone = [symbol_to_id.get(p, symbol_to_id.get("UNK", 0)) for p in phones]
+            tone = tones
+        else:
+            # Use precomputed
+            pass
+
+        print(f"Before intersperse: phones {phone[:10]}, tones {tone[:10]}")
+        # Shift phoneme tones by 1 to avoid conflict with blank tone 0
+        if tones:
+            pad_start = tones[0]
+            pad_end = tones[-1]
+            phoneme_tones = tones[1:-1]
+            phoneme_tones = [t + 1 for t in phoneme_tones]
+            tones = [pad_start] + phoneme_tones + [pad_end]
+        print(f"After shift: tones {tones[:10]}")
         text, phone, tone, word_pos, syllable_pos = self.get_text(
             text, phone, tone, word_pos, syllable_pos, add_blank=self.add_blank, skip_pos=self.skip_pos
         )
@@ -233,14 +222,8 @@ class TextMelDataset(torch.utils.data.Dataset):
         mel = self.get_mel(audio22k, self.sample_rate)
         spk_emb = None
 
-        if not self.skip_spk_emb and self.speaker_embedding_onnx_session is not None:
-            spk_emb_path = self.tmp_dir / "spk_emb" / (audio_path + ".pt")
-
-            if spk_emb_path.exists():
-                spk_emb = torch.load(spk_emb_path)
-            else:
-                spk_emb = get_spk_embedding(audio16k, self.speaker_embedding_onnx_session)
-                torch.save(spk_emb, spk_emb_path)
+        if not self.skip_spk_emb and self.speaker_embedding_extractor is not None:
+            spk_emb = self.speaker_embedding_extractor.forward(audio16k, 16000)
 
         durations = self.get_durations(audio, text) if self.load_durations else None
 
@@ -254,6 +237,7 @@ class TextMelDataset(torch.utils.data.Dataset):
             "word_pos": word_pos,
             "syllable_pos": syllable_pos,
             "spk_emb": spk_emb,
+            "lang": lang,
         }
 
     def get_durations(self, filepath, text):
@@ -291,6 +275,14 @@ class TextMelDataset(torch.utils.data.Dataset):
         return mel
 
     def get_text(self, text, phone, tones, word_pos, syllable_pos, add_blank=False, skip_pos=False):
+        # Shift phoneme tones by 1 to avoid conflict with blank tone 0
+        if tones:
+            pad_start = tones[0]
+            pad_end = tones[-1]
+            phoneme_tones = tones[1:-1]
+            phoneme_tones = [t + 1 for t in phoneme_tones]
+            tones = [pad_start] + phoneme_tones + [pad_end]
+
         if add_blank:
             phone = intersperse(phone, 0)
             tones = intersperse(tones, 0)
@@ -333,16 +325,18 @@ class TextMelBatchCollate:
         syllable_pos = torch.zeros((B, x_max_length), dtype=torch.long)
         durations = torch.zeros((B, x_max_length), dtype=torch.long)
         spk_embed = torch.zeros(B, 192, dtype=torch.float32)
+        lang = torch.zeros(B, dtype=torch.long)
         y_lengths, x_lengths = [], []
         filepaths, x_texts = [], []
         for i, item in enumerate(batch):
-            y_, x_, tone_, word_pos_, syllable_pos_, spk_embed_ = (
+            y_, x_, tone_, word_pos_, syllable_pos_, spk_embed_, lang_str = (
                 item["y"],
                 item["x"],
                 item["tone"],
                 item["word_pos"],
                 item["syllable_pos"],
                 item["spk_emb"],
+                item["lang"],
             )
             y_lengths.append(y_.shape[-1])
             x_lengths.append(x_.shape[-1])
@@ -353,6 +347,8 @@ class TextMelBatchCollate:
             syllable_pos[i, : syllable_pos_.shape[-1]] = syllable_pos_
             if spk_embed_ is not None:
                 spk_embed[i] = torch.tensor(spk_embed_).float()
+            lang_id = {"en": 0, "yue": 1, "zh": 2}[lang_str]
+            lang[i] = lang_id
             filepaths.append(item["filepath"])
             x_texts.append(item["x_text"])
             if item["durations"] is not None:
@@ -372,5 +368,6 @@ class TextMelBatchCollate:
             "filepaths": filepaths,
             "x_texts": x_texts,
             "spk_emb": spk_embed,
+            "lang": lang,
             "durations": durations if not torch.eq(durations, 0).all() else None,
         }

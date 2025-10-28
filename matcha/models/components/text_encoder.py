@@ -340,6 +340,11 @@ class TextEncoder(nn.Module):
         self.n_vocab = n_vocab
         self.n_feats = encoder_params.n_feats
         self.n_channels = encoder_params.n_channels
+        self.filter_channels = encoder_params.filter_channels
+        self.n_heads = encoder_params.n_heads
+        self.n_layers = encoder_params.n_layers
+        self.kernel_size = encoder_params.kernel_size
+        self.p_dropout = encoder_params.p_dropout
         self.spk_emb_dim = spk_emb_dim
         self.n_spks = n_spks
 
@@ -347,9 +352,9 @@ class TextEncoder(nn.Module):
         torch.nn.init.normal_(self.emb.weight, 0.0, self.n_channels**-0.5)
         self.tone_emb = nn.Embedding(7, self.n_channels)  # PAD token + 6 tones for Cantonese
         torch.nn.init.normal_(self.tone_emb.weight, 0.0, self.n_channels**-0.5)
-        self.word_pos_emb = nn.Embedding(4, self.n_channels)  # 0: pad, 1: begin, 2: middle, 3: end
+        self.word_pos_emb = nn.Embedding(100, self.n_channels)  # Increased to handle more word positions
         nn.init.normal_(self.word_pos_emb.weight, 0.0, self.n_channels**-0.5)
-        self.syllable_pos = nn.Embedding(4, self.n_channels)  # 0: pad, 1: onset, 2: nucleus, 3: coda
+        self.syllable_pos = nn.Embedding(10, self.n_channels)  # Increased to handle more syllable positions
         nn.init.normal_(self.syllable_pos.weight, 0.0, self.n_channels**-0.5)
 
         if encoder_params.prenet:
@@ -365,16 +370,16 @@ class TextEncoder(nn.Module):
             self.prenet = lambda x, x_mask: x
 
         self.encoder = Encoder(
-            encoder_params.n_channels + (spk_emb_dim if n_spks > 1 else 0),
-            encoder_params.filter_channels,
-            encoder_params.n_heads,
-            encoder_params.n_layers,
-            encoder_params.kernel_size,
-            encoder_params.p_dropout,
+            self.n_channels,
+            self.filter_channels,
+            self.n_heads,
+            self.n_layers,
+            self.kernel_size,
+            self.p_dropout,
         )
-        self.proj_m = torch.nn.Conv1d(self.n_channels + spk_emb_dim, self.n_feats, 1)
+        self.proj_m = torch.nn.Conv1d(self.n_channels, self.n_feats, 1)
         self.proj_w = DurationPredictor(
-            self.n_channels + (spk_emb_dim if n_spks > 1 else 0),
+            self.n_channels,
             duration_predictor_params.filter_channels_dp,
             duration_predictor_params.kernel_size,
             duration_predictor_params.p_dropout,
@@ -417,7 +422,7 @@ class TextEncoder(nn.Module):
 
         x = self.prenet(x, x_mask)
         if self.n_spks > 1:
-            x = torch.cat([x, spks.unsqueeze(-1).repeat(1, 1, x.shape[-1])], dim=1)
+            x = x + spks.unsqueeze(-1)  # add
         x = self.encoder(x, x_mask)
         mu = self.proj_m(x) * x_mask
 
