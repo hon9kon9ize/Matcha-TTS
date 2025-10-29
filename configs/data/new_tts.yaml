@@ -19,4 +19,3 @@ data_statistics:
   mel_std: 2.1896095275878906
 seed: ${seed}
 load_durations: false
-speaker_embedding_model_path: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/campplus.onnx"

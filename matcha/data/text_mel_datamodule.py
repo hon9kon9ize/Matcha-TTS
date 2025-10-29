@@ -19,7 +19,6 @@ class TextMelDataModule(LightningDataModule):
         name,
         dataset_path,
         dataset_valid_ratio,
-        speaker_embedding_model_path,
         batch_size,
         num_workers,
         pin_memory,
