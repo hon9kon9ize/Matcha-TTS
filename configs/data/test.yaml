@@ -1,6 +1,6 @@
 _target_: matcha.data.text_mel_datamodule.TextMelDataModule
 name: test
-dataset_path: "test" # Dummy dataset path for testing
+dataset_path: /notebooks/bert-vits2/frankenstein-matcha/tmp/processed_dummy # Use processed dummy dataset
 dataset_valid_ratio: 0.1
 speaker_embedding_model_path: "/notebooks/bert-vits2/frankenstein-matcha/pretrained_models/campplus.onnx"
 batch_size: 2

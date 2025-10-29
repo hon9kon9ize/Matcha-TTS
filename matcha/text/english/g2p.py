@@ -1,17 +1,18 @@
 import pickle
 import os
 import re
-from typing import Optional, List
 from matcha.text.english.symbols import punctuation
 from g2p_en import G2p
-from transformers import BertTokenizer
+from transformers import DebertaV2Tokenizer
+from pydips import BertModel
 
 current_file_path = os.path.dirname(__file__)
 CMU_DICT_PATH = os.path.join(current_file_path, "cmudict.rep")
 CACHE_PATH = os.path.join(current_file_path, "cmudict_cache.pickle")
 _g2p = G2p()
-LOCAL_PATH = "bert-base-uncased"
-tokenizer = BertTokenizer.from_pretrained(LOCAL_PATH)
+LOCAL_PATH = "./bert/deberta-v3-large"
+tokenizer = DebertaV2Tokenizer.from_pretrained(LOCAL_PATH)
+ws_model = BertModel()
 
 arpa = {
     "AH0",
@@ -189,6 +190,25 @@ def distribute_phone(n_phone, n_word):
     return phones_per_word
 
 
+def get_syllable_positions(phones):
+    """Assign syllable positions to phonemes: 0=padding, 1=onset, 2=nucleus, 3=coda"""
+    # English vowels (nuclei)
+    vowels = {"aa", "ae", "ah", "ao", "aw", "ay", "eh", "er", "ey", "ih", "iy", "ow", "oy", "uh", "uw"}
+
+    positions = []
+    for phone in phones:
+        if phone == "_":  # Padding
+            positions.append(0)
+        elif phone in vowels:  # Vowel = nucleus
+            positions.append(2)
+        else:  # Consonant - need to determine if onset or coda
+            # For simplicity, treat all consonants as onset (1)
+            # A more sophisticated approach would track syllable boundaries
+            positions.append(1)
+
+    return positions
+
+
 def text_to_words(text):
     tokens = tokenizer.tokenize(text)
     words = []
@@ -263,13 +283,25 @@ def g2p(text, phoneme=None, skip_pos=False):
     assert len(phones) == len(tones), text
     assert len(phones) == sum(word2ph), text
 
-    # Calculate word_pos
-    word_pos = []
-    for i, count in enumerate(word2ph):
-        word_pos.extend([i + 1] * count)
-
-    # For compatibility, return syllable_pos as zeros
-    syllable_pos = [0] * len(phones)
+    if not skip_pos:
+        # Use word-based segmentation with boundary labels for consistency
+        # Convert word2ph to boundary labels: 1=Begin, 2=Middle, 3=End
+        word_pos = []
+        for i, count in enumerate(word2ph):
+            if i == 0 or i == len(word2ph) - 1:  # Padding
+                word_pos.extend([0] * count)
+            else:
+                if count == 1:
+                    word_pos.append(1)  # Single phone word: Begin
+                elif count == 2:
+                    word_pos.extend([1, 3])  # Two phone word: Begin, End
+                else:
+                    word_pos.extend([1] + [2] * (count - 2) + [3])  # Multi phone word: Begin, Middle..., End
+        # Generate syllable positions for phonemes
+        syllable_pos = get_syllable_positions(phones)
+    else:
+        word_pos = [0] * len(phones)
+        syllable_pos = [0] * len(phones)
 
     return phones, tones, word2ph, word_pos, syllable_pos
 

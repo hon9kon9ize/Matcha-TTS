@@ -9,7 +9,7 @@ from torch.utils.data.dataloader import DataLoader
 from matcha.utils.audio import mel_spectrogram
 from matcha.utils.model import fix_len_compatibility, normalize
 from matcha.utils.utils import intersperse
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from matcha.feature_extractions.spkemb_speechbrain import SpeechBrainSpkEmbExtractor
 
 
@@ -51,8 +51,17 @@ class TextMelDataModule(LightningDataModule):
         careful not to execute things like random split twice!
         """
         # load and split datasets only if not loaded already
-        ds = load_dataset(self.hparams.dataset_path, split="train")
-        ds = ds.train_test_split(test_size=self.hparams.dataset_valid_ratio)
+        import os
+
+        if os.path.isdir(self.hparams.dataset_path):
+            # Load local dataset saved with save_to_disk
+            ds = load_from_disk(self.hparams.dataset_path)
+            # For local datasets, split manually
+            ds = ds.train_test_split(test_size=self.hparams.dataset_valid_ratio)
+        else:
+            # Load from HuggingFace Hub
+            ds = load_dataset(self.hparams.dataset_path, split="train")
+            ds = ds.train_test_split(test_size=self.hparams.dataset_valid_ratio)
 
         self.trainset = TextMelDataset(  # pylint: disable=attribute-defined-outside-init
             ds["train"],
@@ -95,20 +104,24 @@ class TextMelDataModule(LightningDataModule):
         return DataLoader(
             dataset=self.trainset,
             batch_size=self.hparams.batch_size,
-            num_workers=self.hparams.num_workers,
+            num_workers=1,  # Fixed to 1 due to pydips compatibility
             pin_memory=self.hparams.pin_memory,
             shuffle=True,
             collate_fn=TextMelBatchCollate(self.hparams.n_spks),
+            prefetch_factor=2,
+            persistent_workers=True,
         )
 
     def val_dataloader(self):
         return DataLoader(
             dataset=self.validset,
             batch_size=self.hparams.batch_size,
-            num_workers=self.hparams.num_workers,
+            num_workers=1,  # Fixed to 1 due to pydips compatibility
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
             collate_fn=TextMelBatchCollate(self.hparams.n_spks),
+            prefetch_factor=2,
+            persistent_workers=True,
         )
 
     def teardown(self, stage: Optional[str] = None):
@@ -171,36 +184,17 @@ class TextMelDataset(torch.utils.data.Dataset):
 
     def get_datapoint(self, row):
         text = row["text"]
-        lang = row.get("lang", "en")
-        phone = row.get("phone")
-        tone = row.get("tones")
-        word_pos = row.get("word_pos")
-        syllable_pos = row.get("syllable_pos")
+        lang = row["lang"]  # Assume lang is always present in pre-processed data
+
+        # Use pre-processed fields directly (assume prepare.py output)
+        phone = row["phone_token_ids"]
+        tones = row["tones"]
+        word_positions = row["word_pos"]
+        syllable_positions = row["syllable_pos"]
         audio = np.array(row["audio"]["array"])
         audio_path = row["audio"]["path"]
         sr = row["audio"]["sampling_rate"]
 
-        if phone is None:
-            # Process text with corresponding G2P
-            if lang == "en":
-                from matcha.text.english.cleaners import clean_text
-            elif lang == "yue":
-                from matcha.text.cantonese.cleaners import clean_text
-            elif lang == "zh":
-                from matcha.text.mandarin.cleaners import clean_text
-            else:
-                raise ValueError(f"Unknown language: {lang}")
-            norm_text, phones, tones, word_pos, syllable_pos = clean_text(text)
-            # Convert phoneme symbols to ids
-            from matcha.text.symbols import symbol_to_id
-
-            phone = [symbol_to_id.get(p, symbol_to_id.get("UNK", 0)) for p in phones]
-            tone = tones
-        else:
-            # Use precomputed
-            pass
-
-        print(f"Before intersperse: phones {phone[:10]}, tones {tone[:10]}")
         # Shift phoneme tones by 1 to avoid conflict with blank tone 0
         if tones:
             pad_start = tones[0]
@@ -208,9 +202,9 @@ class TextMelDataset(torch.utils.data.Dataset):
             phoneme_tones = tones[1:-1]
             phoneme_tones = [t + 1 for t in phoneme_tones]
             tones = [pad_start] + phoneme_tones + [pad_end]
-        print(f"After shift: tones {tones[:10]}")
+
         text, phone, tone, word_pos, syllable_pos = self.get_text(
-            text, phone, tone, word_pos, syllable_pos, add_blank=self.add_blank, skip_pos=self.skip_pos
+            text, phone, tones, word_positions, syllable_positions, add_blank=self.add_blank, skip_pos=self.skip_pos
         )
         audio16k = audio
         audio22k = audio
@@ -220,9 +214,10 @@ class TextMelDataset(torch.utils.data.Dataset):
         elif sr == 22_050:
             audio16k = librosa.resample(audio, orig_sr=sr, target_sr=16_000)
         mel = self.get_mel(audio22k, self.sample_rate)
-        spk_emb = None
 
-        if not self.skip_spk_emb and self.speaker_embedding_extractor is not None:
+        # Use pre-computed speaker embedding if available, otherwise compute it
+        spk_emb = row.get("spk_emb")
+        if spk_emb is None and not self.skip_spk_emb and self.speaker_embedding_extractor is not None:
             spk_emb = self.speaker_embedding_extractor.forward(audio16k, 16000)
 
         durations = self.get_durations(audio, text) if self.load_durations else None

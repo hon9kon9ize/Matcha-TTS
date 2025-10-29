@@ -2,6 +2,9 @@ from typing import Optional, List
 from matcha.text.mandarin.symbols import punctuation
 import pypinyin
 from pypinyin import Style
+from pydips import BertModel
+
+ws_model = BertModel()
 
 
 def text_to_pinyin(text: str) -> List[tuple]:
@@ -51,16 +54,11 @@ def g2p(
     text: str,
     pinyin_input: Optional[str] = None,
     skip_pos: bool = False,
-    word_pos: Optional[List[int]] = None,
-    syllable_pos: Optional[List[int]] = None,
 ):
     """Grapheme to phoneme conversion for Mandarin."""
     if pinyin_input is None:
         pinyin_syllables = text_to_pinyin(text)
     else:
-        # If pinyin_input provided, assume it's space-separated pinyin
-        pinyin_list = pinyin_input.split()
-        # For simplicity, assume no initials-finals split, but since we need tuples, perhaps parse
         # For now, assume pinyin_input is not used or handle differently
         raise NotImplementedError("pinyin_input not supported yet")
 
@@ -71,13 +69,36 @@ def g2p(
     tones = [0] + tones + [0]
 
     if not skip_pos:
-        if word_pos is None:
-            # Simple word position assignment
-            word_pos = []
-            for i, count in enumerate(word2ph):
-                word_pos.extend([i + 1] * count)
+        # Use BERT-based word segmentation for proper word boundaries
+        ws = ws_model.cut(text, mode="coarse")
+
+        assert sum([len(x) for x in ws]) == len(text), "BERT output length mismatch with text length."
+
+        ws_labels = []
+        word_pos_temp = []
+
+        for w in ws:
+            if len(w) == 0:
+                continue
+            elif len(w) == 1:
+                ws_labels.append(1)  # Begin
+            elif len(w) == 2:
+                ws_labels.extend([1, 3])  # Begin, End
+            elif len(w) > 2:
+                ws_labels.extend([1] + [2] * (len(w) - 2) + [3])  # Begin, Middle..., End
+
+        # Extend word boundary labels to phonemes
+        for i, ws_label in enumerate(ws_labels):
+            num_phones = word2ph[i]
+            word_pos_temp.extend([ws_label] * num_phones)
+
+        word_pos = word_pos_temp
         word_pos = [0] + word_pos + [0]
         syllable_pos_out = [0] + syllable_pos_out + [0]
+    else:
+        # Return default zero lists when skip_pos is True
+        word_pos = [0] * len(phones)
+        syllable_pos_out = [0] * len(phones)
 
     return phones, tones, word2ph, word_pos, syllable_pos_out
 

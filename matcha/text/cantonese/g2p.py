@@ -2,7 +2,7 @@ from matcha.text.cantonese.symbols import punctuation
 import re
 import unicodedata
 from pydips import BertModel
-from typing import Optional, List
+from typing import Optional
 import pycantonese
 import ToJyutping
 
@@ -97,8 +97,6 @@ def g2p(
     text: str,
     jyutping: Optional[str] = None,
     skip_pos: bool = False,
-    word_pos: Optional[List[int]] = None,
-    syllable_pos: Optional[List[int]] = None,
 ):
     if jyutping is None:
         jyutping = get_jyutping(text)
@@ -118,33 +116,36 @@ def g2p(
     tones = [0] + tones + [0]
 
     if not skip_pos:
-        if word_pos is None:
-            ws = ws_model.cut(text, mode="coarse")
+        ws = ws_model.cut(text, mode="coarse")
 
-            assert sum([len(x) for x in ws]) == len(text), "BERT output length mismatch with text length."
+        assert sum([len(x) for x in ws]) == len(text), "BERT output length mismatch with text length."
 
-            ws_labels = []
-            word_pos = []
+        ws_labels = []
+        word_pos = []
 
-            for w in ws:
-                if len(w) == 0:
-                    continue
-                elif len(w) == 1:
-                    ws_labels.append(1)  # Begin
-                elif len(w) == 2:
-                    ws_labels.extend([1, 3])  # End
-                elif len(w) > 2:
-                    ws_labels.extend([1] + [2] * (len(w) - 2) + [3])  # Begin, Middle, End
+        for w in ws:
+            if len(w) == 0:
+                continue
+            elif len(w) == 1:
+                ws_labels.append(1)  # Begin
+            elif len(w) == 2:
+                ws_labels.extend([1, 3])  # End
+            elif len(w) > 2:
+                ws_labels.extend([1] + [2] * (len(w) - 2) + [3])  # Begin, Middle, End
 
-            for i, ws_label in enumerate(ws_labels):
-                num_phones = word2ph[i]
-                word_pos.extend([ws_label] * num_phones)
+        for i, ws_label in enumerate(ws_labels):
+            num_phones = word2ph[i]
+            word_pos.extend([ws_label] * num_phones)
         word_pos = [0] + word_pos + [0]
         syllable_pos = [0] + syllable_pos + [0]
 
         assert (
             len(phones) == len(tones) == len(word_pos) == len(syllable_pos)
         ), "Phones, tones, word positions, and syllable positions must have the same length."
+    else:
+        # Return default zero lists when skip_pos is True
+        word_pos = [0] * len(phones)
+        syllable_pos = [0] * len(phones)
 
     return phones, tones, word2ph, word_pos, syllable_pos
 

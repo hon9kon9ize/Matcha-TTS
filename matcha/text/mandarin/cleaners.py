@@ -54,7 +54,7 @@ def text_normalize(text):
 
 def clean_text(text, pinyin=None, skip_pos=False):
     norm_text = text_normalize(text)
-    phones, tones, word2ph, word_pos, syllable_pos = g2p(norm_text, pinyin, skip_pos)
+    phones, tones, word2ph, word_pos, syllable_pos = g2p(norm_text, skip_pos=skip_pos)  # Ignore pinyin parameter
     return norm_text, phones, tones, word_pos, syllable_pos
 
 

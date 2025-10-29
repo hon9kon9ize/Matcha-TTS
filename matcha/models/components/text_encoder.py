@@ -12,6 +12,57 @@ from matcha.utils.model import sequence_mask
 log = utils.get_pylogger(__name__)
 
 
+class ConditionalLayerNorm(nn.Module):
+    def __init__(self, normalized_shape, speaker_embedding_dim):
+        super().__init__()
+
+        # 1. Standard LayerNorm computation (mean and variance)
+        self.ln = nn.LayerNorm(normalized_shape, elementwise_affine=False)
+
+        # 2. Generator: Projects the speaker embedding (e)
+        # to generate the dynamic scale (gamma) and bias (beta).
+        # We need to generate 2 * normalized_shape parameters.
+        self.gamma_beta_generator = nn.Sequential(
+            nn.Linear(speaker_embedding_dim, normalized_shape * 2),
+            # Optional: Add ReLU or other non-linearity here
+        )
+
+        self.normalized_shape = normalized_shape
+
+    def forward(self, x, speaker_embedding):
+        """
+        Args:
+            x (Tensor): The input feature map from the text encoder.
+                        Shape: (Batch_size, Seq_Len, Normalized_Shape)
+            speaker_embedding (Tensor): The fixed-length speaker embedding.
+                                        Shape: (Batch_size, Speaker_Embedding_Dim)
+        """
+        # Step 1: Standard Layer Normalization (computes mean/variance)
+        # Note: elementwise_affine=False means the internal ln has no learnable gamma/beta
+        normalized_x = self.ln(x)  # Shape: (B, L, D)
+
+        # Step 2: Generate dynamic gamma and beta from the speaker embedding (e)
+        gamma_beta = self.gamma_beta_generator(speaker_embedding)
+
+        # Split the output into gamma and beta
+        gamma, beta = torch.split(gamma_beta, self.normalized_shape, dim=-1)
+
+        # Step 3: Apply the dynamic scale (gamma) and bias (beta)
+        #
+        # Tensors need to be broadcastable:
+        # x:       (B, L, D)
+        # gamma/beta: (B, D) -> needs to be reshaped to (B, 1, D) for broadcasting
+
+        # Reshape for broadcasting along the sequence length (L)
+        gamma = gamma.unsqueeze(1)  # Shape: (B, 1, D)
+        beta = beta.unsqueeze(1)  # Shape: (B, 1, D)
+
+        # Element-wise multiplication (scaling) and addition (biasing)
+        output = gamma * normalized_x + beta
+
+        return output
+
+
 class LayerNorm(nn.Module):
     def __init__(self, channels, eps=1e-4):
         super().__init__()
@@ -385,6 +436,10 @@ class TextEncoder(nn.Module):
             duration_predictor_params.p_dropout,
         )
 
+        # Add conditional layer normalization for speaker conditioning
+        if self.n_spks > 1:
+            self.spk_cln = ConditionalLayerNorm(self.n_channels, spk_emb_dim)
+
     def output_size(self):
         """Get the output size of the encoder"""
         return self.n_feats
@@ -422,7 +477,10 @@ class TextEncoder(nn.Module):
 
         x = self.prenet(x, x_mask)
         if self.n_spks > 1:
-            x = x + spks.unsqueeze(-1)  # add
+            # CLN expects (B, L, D) format, but x is (B, C, T)
+            x_for_cln = x.transpose(1, 2)  # Convert (B, C, T) -> (B, T, C)
+            x_for_cln = self.spk_cln(x_for_cln, spks)  # Apply conditional layer normalization
+            x = x_for_cln.transpose(1, 2)  # Convert back (B, T, C) -> (B, C, T)
         x = self.encoder(x, x_mask)
         mu = self.proj_m(x) * x_mask
 
