@@ -21,6 +21,9 @@ from matcha.utils.utils import plot_tensor
 
 log = utils.get_pylogger(__name__)
 
+# Vocos imports
+from vocos import Vocos
+
 
 class BaseLightningClass(LightningModule, ABC):
     def update_data_statistics(self, data_statistics):
@@ -223,6 +226,7 @@ class BaseLightningClass(LightningModule, ABC):
                     )
 
             log.debug("Synthesising...")
+            vocoder = Vocos.from_pretrained("BSC-LT/vocos-mel-22khz")
             for i in range(2):
                 x = one_batch["x"][i].unsqueeze(0).to(self.device)
                 x_lengths = one_batch["x_lengths"][i].unsqueeze(0).to(self.device)
@@ -243,7 +247,7 @@ class BaseLightningClass(LightningModule, ABC):
                     spk_emb=spk_emb,
                     lang=lang,
                 )
-                y_enc, y_dec = output["encoder_outputs"], output["decoder_outputs"]
+                y_enc, y_dec, mel = output["encoder_outputs"], output["decoder_outputs"], output["mel"]
                 attn = output["attn"]
                 self.log_image(
                     f"generated_enc/{i}",
@@ -256,6 +260,16 @@ class BaseLightningClass(LightningModule, ABC):
                 self.log_image(
                     f"alignment/{i}",
                     plot_tensor(attn.squeeze().cpu()),
+                )
+
+                vocoder = vocoder.to(self.device)
+                y_hat_audio = vocoder.decode(mel)
+
+                self.logger.experiment.add_audio(
+                    f"audio_{i}_lang_{lang.item()}",
+                    y_hat_audio.squeeze().cpu(),
+                    self.global_step,
+                    22050,  # sample rate
                 )
 
     def on_before_optimizer_step(self, optimizer):

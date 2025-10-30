@@ -11,6 +11,7 @@ from matcha.utils.model import fix_len_compatibility, normalize
 from matcha.utils.utils import intersperse
 from datasets import load_dataset, load_from_disk
 from matcha.feature_extractions.spkemb_speechbrain import SpeechBrainSpkEmbExtractor
+import hashlib
 
 
 class TextMelDataModule(LightningDataModule):
@@ -174,6 +175,8 @@ class TextMelDataset(torch.utils.data.Dataset):
 
         # Create temporary directory if it does not exist
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        self.spk_emb_cache_dir = self.tmp_dir / "spk_emb"
+        self.spk_emb_cache_dir.mkdir(parents=True, exist_ok=True)
 
         if data_parameters is not None:
             self.data_parameters = data_parameters
@@ -217,7 +220,14 @@ class TextMelDataset(torch.utils.data.Dataset):
         # Use pre-computed speaker embedding if available, otherwise compute it
         spk_emb = row.get("spk_emb")
         if spk_emb is None and not self.skip_spk_emb and self.speaker_embedding_extractor is not None:
-            spk_emb = self.speaker_embedding_extractor.forward(audio16k, 16000)
+            # Check cache
+            cache_key = hashlib.md5(audio_path.encode()).hexdigest() + ".npy"
+            cache_path = self.spk_emb_cache_dir / cache_key
+            if cache_path.exists():
+                spk_emb = np.load(cache_path)
+            else:
+                spk_emb = self.speaker_embedding_extractor.forward(audio16k, 16000)
+                np.save(cache_path, spk_emb)
 
         durations = self.get_durations(audio, text) if self.load_durations else None
 

@@ -61,7 +61,7 @@ def process_row(row):
 
 
 def main():
-    parser = argparse.ArgumentlsParser(description="Preprocess dataset for multilingual TTS")
+    parser = argparse.ArgumentParser(description="Preprocess dataset for multilingual TTS")
     parser.add_argument(
         "--dataset_path", type=str, required=True, help="Path or Hugging Face dataset identifier to load"
     )
