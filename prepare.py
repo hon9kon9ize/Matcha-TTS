@@ -12,9 +12,6 @@ from matcha.text.english.cleaners import clean_text as clean_text_en
 from matcha.text.cantonese.cleaners import clean_text as clean_text_yue
 from matcha.text.mandarin.cleaners import clean_text as clean_text_zh
 from matcha.text.symbols import symbol_to_id
-from matcha.feature_extractions.spkemb_speechbrain import SpeechBrainSpkEmbExtractor
-
-speaker_extractor = SpeechBrainSpkEmbExtractor(device="cpu")
 
 
 def process_row(row):
@@ -34,7 +31,11 @@ def process_row(row):
         raise ValueError(f"Unsupported language: {lang}")
 
     # Clean text and extract phonemes, tones, and positions
-    _, phones, tones, word_pos, syllable_pos = clean_func(text, phone)
+    try:
+        _, phones, tones, word_pos, syllable_pos = clean_func(text, phone)
+    except Exception as e:
+        print(f"Failed to clean text for row: {e}")
+        return None
 
     # Convert phoneme symbols to IDs
     phone_ids = [symbol_to_id.get(p, symbol_to_id.get("UNK", 0)) for p in phones]
@@ -49,42 +50,18 @@ def process_row(row):
     else:
         shifted_tones = tones
 
-    # Extract speaker embedding if audio is available
-    spk_emb = None
-    if "audio" not in row:
-        raise ValueError("Audio data is required for TTS training but not found in dataset row")
-    if "audio" in row:
-        try:
-            # Extract audio data
-            audio_data = np.array(row["audio"]["array"])
-            sr = row["audio"]["sampling_rate"]
-
-            # Resample to 16kHz for speaker embedding extraction
-            if sr != 16000:
-                audio_16k = librosa.resample(audio_data, orig_sr=sr, target_sr=16000)
-            else:
-                audio_16k = audio_data
-
-            # Extract speaker embedding
-            spk_emb = speaker_extractor.forward(audio_16k, 16000)
-
-        except (KeyError, ValueError, RuntimeError) as e:
-            print(f"Warning: Could not extract speaker embedding for sample: {e}")
-            spk_emb = None
-
     # Add processed fields to the row
     row["phone"] = phones  # Phoneme text (jyutping, pinyin, or ARPABET)
     row["phone_token_ids"] = phone_ids  # Phoneme token IDs
     row["tones"] = shifted_tones
     row["word_pos"] = word_pos
     row["syllable_pos"] = syllable_pos
-    row["spk_emb"] = spk_emb  # Speaker embedding
 
     return row
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Preprocess dataset for multilingual TTS")
+    parser = argparse.ArgumentlsParser(description="Preprocess dataset for multilingual TTS")
     parser.add_argument(
         "--dataset_path", type=str, required=True, help="Path or Hugging Face dataset identifier to load"
     )
@@ -108,7 +85,7 @@ def main():
             raise
 
     print(f"Processing {len(ds)} samples...")
-    ds = ds.map(process_row, desc="Processing text data")
+    ds = ds.map(process_row, num_proc=16, desc="Processing text data")
 
     if args.push_to_hub:
         print(f"Pushing processed dataset to Hugging Face Hub: {args.push_to_hub}")

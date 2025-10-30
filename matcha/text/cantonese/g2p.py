@@ -40,7 +40,7 @@ def jyutping_to_onsets_nucleuses_codas_tones(jyutping_syllables):
                 num_phones = 0
 
                 if onset != "":
-                    onsets_nucleuses_codas.append("^" + onset)
+                    onsets_nucleuses_codas.append(onset)
                     tones.append(int(tone))
                     syllable_pos.append(1)
                     num_phones += 1
@@ -50,7 +50,7 @@ def jyutping_to_onsets_nucleuses_codas_tones(jyutping_syllables):
                     syllable_pos.append(2)
                     num_phones += 1
                 if coda != "":
-                    onsets_nucleuses_codas.append(coda + "$")
+                    onsets_nucleuses_codas.append(coda)
                     tones.append(int(tone))
                     syllable_pos.append(3)
                     num_phones += 1
